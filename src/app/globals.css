@@ -1,11 +1,138 @@
 @import "tailwindcss";
 
-/* Design tokens are added in the next stage (from design/UI.html). */
-@theme inline {
+/*
+ * AkunTrack design tokens, taken from design/UI.html.
+ * Tailwind's default palette, type scale and radii are reset so only these
+ * values are available: use the utilities (bg-surface, text-ink-muted,
+ * rounded-xl, text-md ...) instead of hardcoded hex or px values.
+ */
+@theme {
+  /* ---------- Color ---------- */
+  --color-*: initial;
+  --color-white: #ffffff;
+
+  /* Surfaces */
+  --color-canvas: #edf0ea; /* page background */
+  --color-surface: #f9faf7; /* panels, receipts, nav */
+  --color-field: #ffffff; /* inputs on top of a surface */
+  --color-track: #dfe4dd; /* segmented track, tags, active nav, meters */
+  --color-disabled: #e3e7e1; /* disabled field / button */
+  --color-tint: #e3e9e1; /* chart highlight zone */
+  --color-overlay: rgb(22 33 28 / 0.45);
+
+  /* Text */
+  --color-ink: #16211c;
+  --color-ink-muted: #4e5c55;
+  --color-ink-subtle: #7e8a82;
+  --color-ink-faint: #8a958e;
+  --color-ink-tag: #2c3832;
+
+  /* Lines */
+  --color-line: #c9d0c7; /* input borders, table header rule */
+  --color-divider: #d3d9d1; /* list and row separators */
+  --color-dash: #bfc8be; /* receipt dashed rule */
+  --color-axis: #aeb8b0; /* chart axis and neutral bars */
+  --color-guide: #9aa59d; /* chart threshold line */
+
+  /* Brand and meaning */
+  --color-gold: #e0a526; /* the one primary action per screen */
+  --color-teal: #0e5e63; /* dollar amounts, links */
+  --color-teal-hover: #0a4548;
+  --color-profit: #1d6b43;
+  --color-loss: #a3261f; /* loss and errors */
+  --color-warn: #b07a12; /* warning dot */
+  --color-warn-ink: #8a5a00; /* warning text */
+
+  /* Status chips: background / foreground pairs */
+  --color-chip-teal: #d7ecec;
+  --color-chip-teal-ink: #0e4f53;
+  --color-chip-gold: #f6e7c1;
+  --color-chip-gold-ink: #6b4700;
+  --color-chip-gray: #e3e7e1;
+  --color-chip-gray-ink: #3f4a44;
+  --color-chip-purple: #e6def3;
+  --color-chip-purple-ink: #4a3270;
+  --color-chip-green: #d8ebdd;
+  --color-chip-green-ink: #1d5b38;
+  --color-chip-red: #f4d9d6;
+  --color-chip-red-ink: #84211b;
+
+  /* ---------- Typography ---------- */
   --font-sans: var(--font-jakarta), system-ui, sans-serif;
+
+  --text-*: initial;
+  --text-2xs: 11px; /* bottom nav labels */
+  --text-2xs--line-height: 14px;
+  --text-xs: 12px; /* captions, secondary lines */
+  --text-xs--line-height: 16px;
+  --text-sm: 13px; /* subtitles, small body */
+  --text-sm--line-height: 18px;
+  --text-base: 14px; /* body, row titles */
+  --text-base--line-height: 19px;
+  --text-md: 15px; /* section titles */
+  --text-md--line-height: 20px;
+  --text-lg: 16px; /* amounts in rows */
+  --text-lg--line-height: 20px;
+  --text-xl: 18px; /* stat values */
+  --text-xl--line-height: 24px;
+  --text-2xl: 20px; /* balance values */
+  --text-2xl--line-height: 26px;
+  --text-3xl: 24px; /* mobile page title */
+  --text-3xl--line-height: 30px;
+  --text-4xl: 28px; /* desktop page title */
+  --text-4xl--line-height: 34px;
+  --text-5xl: 30px; /* hero number (laba) */
+  --text-5xl--line-height: 36px;
+
+  --tracking-tight: -0.02em;
+
+  /* ---------- Radius ---------- */
+  --radius-*: initial;
+  --radius-xs: 4px; /* bars */
+  --radius-sm: 6px; /* chips, tags */
+  --radius-md: 10px; /* nav items, small tiles */
+  --radius-lg: 12px; /* inputs, choice buttons */
+  --radius-xl: 14px; /* primary button, compact cards */
+  --radius-2xl: 16px; /* cards, receipts */
+  --radius-3xl: 20px; /* bottom sheet */
+
+  /* ---------- Spacing and sizing ---------- */
+  --spacing: 4px;
+  --spacing-gutter: 20px; /* mobile page gutter */
+  --spacing-tap: 44px; /* minimum touch target */
+  --spacing-control: 48px; /* inputs and buttons */
+  --spacing-action: 52px; /* primary action button */
+  --spacing-sidebar: 248px;
+
+  /* ---------- Effects ---------- */
+  --shadow-fab: 0 0 0 6px var(--color-canvas);
+  --shadow-panel: 0 8px 32px rgb(22 33 28 / 0.18);
+
+  /* ---------- Breakpoints ---------- */
+  --breakpoint-lg: 1024px; /* sidebar layout from here up */
 }
 
-body {
-  font-family: var(--font-sans);
-  font-variant-numeric: tabular-nums;
+@layer base {
+  html {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+  }
+
+  a {
+    color: var(--color-teal);
+  }
+
+  a:hover {
+    color: var(--color-teal-hover);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-teal);
+    outline-offset: 2px;
+  }
 }
