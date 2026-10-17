@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* Design tokens are added in the next stage (from design/UI.html). */
+@theme inline {
+  --font-sans: var(--font-jakarta), system-ui, sans-serif;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
