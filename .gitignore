@@ -43,3 +43,6 @@ next-env.d.ts
 
 # project reference docs (kept local only)
 /guide.md
+
+# generated Excel import SQL (contains usernames)
+/import/
