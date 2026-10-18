@@ -6,8 +6,11 @@ type ReceiptProps = {
   titleId?: string;
   /** Right side of the title row, e.g. "update 16 Okt, 21.40". */
   meta?: ReactNode;
-  /** `canvas` when the receipt sits on a surface panel (desktop side panel). */
-  background?: "surface" | "canvas";
+  /**
+   * `canvas` when the receipt sits on a surface panel; `screen` for dialogs that
+   * are full screen on canvas (phone) and a surface side panel (desktop).
+   */
+  background?: "surface" | "canvas" | "screen";
   className?: string;
   children: ReactNode;
 };
@@ -17,8 +20,8 @@ type ReceiptProps = {
  * a dashed rule, a total, and a zigzag bottom edge.
  */
 export function Receipt({ title, titleId, meta, background = "surface", className, children }: ReceiptProps) {
-  const bg = background === "surface" ? "bg-surface" : "bg-canvas";
-  const fill = background === "surface" ? "fill-surface" : "fill-canvas";
+  const bg = { surface: "bg-surface", canvas: "bg-canvas", screen: "bg-surface lg:bg-canvas" }[background];
+  const fill = { surface: "fill-surface", canvas: "fill-canvas", screen: "fill-surface lg:fill-canvas" }[background];
   return (
     <section aria-labelledby={titleId} className={cn("flex flex-col", className)}>
       <div className={cn("flex flex-col gap-3.5 rounded-t-2xl px-4.5 pt-4.5 pb-4", bg)}>

@@ -13,7 +13,9 @@ type Placement =
   /** Right-hand panel over the page (desktop Tandai terjual). */
   | "side"
   /** Bottom sheet on phones, right panel from the lg breakpoint. */
-  | "responsive";
+  | "responsive"
+  /** Full screen on phones (Tandai terjual), right panel from the lg breakpoint. */
+  | "screen";
 
 type DialogProps = {
   open: boolean;
@@ -34,6 +36,7 @@ const CONTENT: Record<Placement, string> = {
   side: "inset-y-0 right-0 w-full max-w-[480px]",
   responsive:
     "inset-x-0 bottom-0 max-h-[92dvh] rounded-t-3xl lg:inset-x-auto lg:inset-y-0 lg:right-0 lg:max-h-none lg:w-full lg:max-w-[480px] lg:rounded-none",
+  screen: "inset-0 bg-canvas lg:inset-auto lg:inset-y-0 lg:right-0 lg:w-full lg:max-w-[460px] lg:bg-surface",
 };
 
 /** Accessible modal surface (focus trap, Esc, scroll lock) in three placements. */
