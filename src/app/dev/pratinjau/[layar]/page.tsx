@@ -13,12 +13,12 @@ import { soldSamples } from "@/lib/analytics";
 import { ratesFrom } from "@/lib/calc";
 import { todayWib } from "@/lib/dates";
 import { formatIdr } from "@/lib/format";
-import { PreviewDialogs } from "../preview-dialogs";
+import { PreviewDialogs, PreviewTransfer } from "../preview-dialogs";
 import * as fx from "../fixtures";
 
 export const metadata: Metadata = { title: "Pratinjau · AkunTrack" };
 
-const SCREENS = ["beranda", "stok", "tambah", "terjual", "detail", "balance", "analytics", "pengaturan"] as const;
+const SCREENS = ["beranda", "stok", "tambah", "terjual", "detail", "balance", "pindah", "analytics", "pengaturan"] as const;
 
 export function generateStaticParams() {
   return SCREENS.map((layar) => ({ layar }));
@@ -109,15 +109,19 @@ async function Screen({ params }: Pick<PageProps<"/dev/pratinjau/[layar]">, "par
       );
       break;
     case "balance":
+    case "pindah":
       content = (
-        <BalanceView
-          balances={fx.balances}
-          stores={fx.stores}
-          withdrawals={withdrawals}
-          adjustments={fx.adjustments}
-          rates={rates}
-          today={today}
-        />
+        <>
+          <BalanceView
+            balances={fx.balances}
+            stores={fx.stores}
+            withdrawals={withdrawals}
+            adjustments={fx.adjustments}
+            rates={rates}
+            today={today}
+          />
+          {layar === "pindah" && <PreviewTransfer balances={fx.balances} today={today} />}
+        </>
       );
       break;
     case "analytics":

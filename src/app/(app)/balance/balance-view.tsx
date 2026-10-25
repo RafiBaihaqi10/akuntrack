@@ -12,7 +12,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { SegmentedControl } from "@/components/ui/choice";
 import { useToast } from "@/components/ui/toast";
 import { sum, withdrawalEstimate, type Rates } from "@/lib/calc";
-import { addAdjustment } from "@/lib/data/actions";
+import { addAdjustment, transferBalance } from "@/lib/data/actions";
 import type { BalanceAdjustment, Store, StoreBalance, Withdrawal } from "@/lib/db-types";
 import { formatDateLong, formatDateShort, formatIdr, formatUsd } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -46,6 +46,7 @@ export function BalanceView({ balances, stores, withdrawals, adjustments, rates,
   const [mode, setMode] = useState<WithdrawalMode>({ kind: "baru" });
   const [sheetOpen, setSheetOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const formRef = useRef<HTMLElement>(null);
 
@@ -132,9 +133,16 @@ export function BalanceView({ balances, stores, withdrawals, adjustments, rates,
         </div>
       </section>
 
-      <Button variant="primary" size="lg" className="lg:hidden" onClick={() => openForm({ kind: "baru" })}>
-        Catat penarikan
-      </Button>
+      <div className="flex flex-col gap-2.5 lg:flex-row">
+        <Button variant="primary" size="lg" className="lg:hidden" onClick={() => openForm({ kind: "baru" })}>
+          Catat penarikan
+        </Button>
+        {balances.length > 1 && (
+          <Button variant="outline" size="lg" className="lg:w-auto" onClick={() => setTransferOpen(true)}>
+            Pindah saldo antar toko
+          </Button>
+        )}
+      </div>
 
       <div className="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_420px]">
         <section aria-labelledby="riwayat-judul" className="flex flex-col gap-1.5 lg:rounded-2xl lg:bg-surface lg:px-5.5 lg:pt-5 lg:pb-4">
@@ -194,7 +202,7 @@ export function BalanceView({ balances, stores, withdrawals, adjustments, rates,
       {adjustments.length > 0 && (
         <section aria-labelledby="sesuai-judul" className="flex flex-col gap-1.5 lg:rounded-2xl lg:bg-surface lg:px-5.5 lg:py-5">
           <h2 id="sesuai-judul" className="mb-1 text-md font-bold lg:text-lg">
-            Penyesuaian saldo
+            Penyesuaian dan pindah saldo
           </h2>
           <ul className="flex flex-col border-b border-divider lg:border-b-0">
             {adjustments.map((a) => (
@@ -230,6 +238,16 @@ export function BalanceView({ balances, stores, withdrawals, adjustments, rates,
         placement="responsive"
       >
         {adjustOpen && <AdjustmentForm stores={stores} today={today} onDone={() => setAdjustOpen(false)} />}
+      </Dialog>
+
+      <Dialog
+        open={transferOpen}
+        onOpenChange={setTransferOpen}
+        title="Pindah saldo antar toko"
+        description="Tanpa potongan: saldo toko asal berkurang, toko tujuan bertambah dengan jumlah yang sama."
+        placement="responsive"
+      >
+        {transferOpen && <TransferForm balances={balances} today={today} onDone={() => setTransferOpen(false)} />}
       </Dialog>
     </PageShell>
   );
@@ -366,3 +384,112 @@ function AdjustmentForm({ stores, today, onDone }: { stores: Store[]; today: str
   );
 }
 
+export function TransferForm({ balances, today, onDone }: { balances: StoreBalance[]; today: string; onDone: () => void }) {
+  const ids = useId();
+  const toast = useToast();
+  // Default: from the store holding the most, to the next one
+  const urut = [...balances].sort((a, b) => b.saldo_usd - a.saldo_usd);
+  const [dariId, setDariId] = useState(urut[0]?.store_id ?? "");
+  const [keId, setKeId] = useState(urut[1]?.store_id ?? "");
+  const [usd, setUsd] = useState<number | null>(null);
+  const [tanggal, setTanggal] = useState(today);
+  const [catatan, setCatatan] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const dari = balances.find((b) => b.store_id === dariId);
+  const saldoDari = dari?.saldo_usd ?? 0;
+  const lebih = (usd ?? 0) > saldoDari + 0.005;
+  const siap = !!dariId && !!keId && dariId !== keId && (usd ?? 0) > 0 && !lebih;
+
+  function gantiDari(id: string) {
+    setDariId(id);
+    if (id === keId) setKeId(balances.find((b) => b.store_id !== id)?.store_id ?? "");
+  }
+
+  return (
+    <form
+      className="flex flex-col gap-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!siap || usd === null) return;
+        setError(null);
+        startTransition(async () => {
+          const res = await transferBalance({ dariId, keId, tanggal, usd, catatan });
+          if (!res.ok) {
+            setError(res.error);
+            return;
+          }
+          toast({ title: `${formatUsd(usd)} dipindah dari ${res.data.dari} ke ${res.data.ke}` });
+          onDone();
+        });
+      }}
+    >
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Dari toko" htmlFor={`${ids}-dari`}>
+          <Select id={`${ids}-dari`} value={dariId} onChange={(e) => gantiDari(e.target.value)}>
+            {balances.map((b) => (
+              <option key={b.store_id} value={b.store_id}>
+                {b.nama}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Ke toko" htmlFor={`${ids}-ke`}>
+          <Select id={`${ids}-ke`} value={keId} onChange={(e) => setKeId(e.target.value)}>
+            {balances
+              .filter((b) => b.store_id !== dariId)
+              .map((b) => (
+                <option key={b.store_id} value={b.store_id}>
+                  {b.nama}
+                </option>
+              ))}
+          </Select>
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Jumlah" htmlFor={`${ids}-usd`}>
+          <MoneyInput id={`${ids}-usd`} currency="usd" placeholder="0" value={usd} onValueChange={setUsd} />
+        </Field>
+        <Field label="Tanggal" htmlFor={`${ids}-tgl`}>
+          <Input
+            id={`${ids}-tgl`}
+            type="date"
+            max={today}
+            value={tanggal}
+            onChange={(e) => setTanggal(e.target.value)}
+            className="font-semibold"
+          />
+        </Field>
+      </div>
+      <p className={cn("-mt-2 text-sm", lebih ? "font-semibold text-loss" : "text-ink-muted")}>
+        {lebih ? "Melebihi saldo" : "Saldo"} {dari?.nama}: {formatUsd(saldoDari)}.{" "}
+        {saldoDari > 0 && (
+          <button
+            type="button"
+            onClick={() => setUsd(Math.round(saldoDari * 100) / 100)}
+            className="min-h-tap font-bold text-teal hover:text-teal-hover"
+          >
+            Pindah semua
+          </button>
+        )}
+      </p>
+      <Field label="Catatan (opsional)" htmlFor={`${ids}-catatan`}>
+        <Input
+          id={`${ids}-catatan`}
+          placeholder="mis. gabung saldo sebelum ditarik"
+          value={catatan}
+          onChange={(e) => setCatatan(e.target.value)}
+        />
+      </Field>
+      {error && (
+        <p role="alert" className="text-sm font-semibold text-loss">
+          {error}
+        </p>
+      )}
+      <Button type="submit" variant="primary" size="lg" disabled={!siap || pending}>
+        {pending ? "Menyimpan…" : `Pindahkan ${usd ? formatUsd(usd) : ""}`}
+      </Button>
+    </form>
+  );
+}

@@ -3,6 +3,7 @@
 import { refresh } from "next/cache";
 import { z } from "zod";
 import { todayWib } from "@/lib/dates";
+import { formatUsd } from "@/lib/format";
 import { ACCOUNT_SOURCES, ACCOUNT_STATUSES, type AccountStatus } from "@/lib/domain";
 import { jumlahVarianFor, parseIsiAkun } from "@/lib/isi-akun";
 import { createClient } from "@/lib/supabase/server";
@@ -405,6 +406,45 @@ export async function addAdjustment(input: z.input<typeof adjustment>) {
         .insert({ store_id: v.storeId, tanggal: v.tanggal, usd: v.usd, alasan: v.alasan }),
     );
     return null;
+  });
+}
+
+const transfer = z
+  .object({
+    dariId: z.uuid("Pilih toko asal"),
+    keId: z.uuid("Pilih toko tujuan"),
+    tanggal: notFuture("Tanggal"),
+    usd: z.number().positive("Isi jumlah yang dipindah").max(100_000, "Angka dolar terlalu besar"),
+    catatan: optionalText,
+  })
+  .refine((v) => v.dariId !== v.keId, { message: "Toko asal dan tujuan harus beda" });
+
+/**
+ * Moves balance between stores without any fee: a pair of adjustments
+ * (minus on the source, plus on the target) written in one insert, so both
+ * land or neither does. Adjustments stay out of the weekly profit report.
+ */
+export async function transferBalance(input: z.input<typeof transfer>) {
+  return run(async () => {
+    const v = transfer.parse(input);
+    const supabase = await authedClient();
+    const saldo = check(
+      await supabase.from("v_store_balance").select("store_id, nama, saldo_usd").in("store_id", [v.dariId, v.keId]),
+    ) as { store_id: string; nama: string; saldo_usd: number }[];
+    const dari = saldo.find((s) => s.store_id === v.dariId);
+    const ke = saldo.find((s) => s.store_id === v.keId);
+    if (!dari || !ke) throw new ActionError("Toko tidak ditemukan");
+    if (v.usd > Number(dari.saldo_usd) + 0.005) {
+      throw new ActionError(`Melebihi saldo ${dari.nama} (${formatUsd(Number(dari.saldo_usd))})`);
+    }
+    const ekor = v.catatan ? `: ${v.catatan}` : "";
+    check(
+      await supabase.from("balance_adjustments").insert([
+        { store_id: v.dariId, tanggal: v.tanggal, usd: -v.usd, alasan: `Pindah ke ${ke.nama}${ekor}` },
+        { store_id: v.keId, tanggal: v.tanggal, usd: v.usd, alasan: `Pindah dari ${dari.nama}${ekor}` },
+      ]),
+    );
+    return { dari: dari.nama, ke: ke.nama };
   });
 }
 
