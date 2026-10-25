@@ -4,7 +4,7 @@ import { useId, useState, useTransition } from "react";
 import { Amount } from "@/components/ui/amount";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChoiceGroup } from "@/components/ui/choice";
+import { ChoiceGroup, SegmentedControl } from "@/components/ui/choice";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, GroupLabel } from "@/components/ui/field";
 import { Input, Select, Textarea } from "@/components/ui/input";
@@ -37,12 +37,12 @@ export function AccountDialog({ account, onOpenChange, ...rest }: AccountDialogP
       title={account ? `Akun ${account.kode}` : "Akun"}
       description={account ? account.game_nama : undefined}
     >
-      {account && <AccountForm key={account.id} account={account} onClose={() => onOpenChange(false)} {...rest} />}
+      {account && (
+        <AccountForm key={account.id} account={account} onClose={() => onOpenChange(false)} {...rest} />
+      )}
     </Dialog>
   );
 }
-
-const STATUS_OPTIONS = ACCOUNT_STATUSES.filter((s) => s !== "Sold");
 
 function AccountForm({
   account,
@@ -59,6 +59,7 @@ function AccountForm({
 
   const [status, setStatus] = useState<AccountStatus>(account.status);
   const [holdSampai, setHoldSampai] = useState(account.hold_sampai ?? "");
+  const [holdTanpaBatas, setHoldTanpaBatas] = useState(account.hold_tanpa_batas);
   const [storeId, setStoreId] = useState(account.store_id ?? "");
   const [isi, setIsi] = useState(account.isi_akun);
   const [username, setUsername] = useState(account.username ?? "");
@@ -68,6 +69,8 @@ function AccountForm({
   const [tanggalBeli, setTanggalBeli] = useState(account.tanggal_beli ?? "");
   const [listing, setListing] = useState<number | null>(account.harga_listing_usd);
   const [catatan, setCatatan] = useState(account.catatan ?? "");
+  const [hargaJual, setHargaJual] = useState<number | null>(null);
+  const [tanggalJual, setTanggalJual] = useState(today);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -75,6 +78,12 @@ function AccountForm({
   const holdSeminggu = addDays(tanggalBeli || today, holdDefaultHari);
   const tags = parseIsiAkun(isi);
   const pilihanToko = stores.filter((s) => s.aktif || s.id === account.store_id);
+  // HB accounts cannot be sold; everything else can be marked Sold right here
+  const statusOptions = ACCOUNT_STATUSES.filter((s) => s !== "Sold" || account.status !== "HB");
+  const jualSekarang = !sold && status === "Sold";
+  const jualSebelumBeli = jualSekarang && !!tanggalBeli && tanggalJual < tanggalBeli;
+  const jualSiap =
+    !jualSekarang || (!!hargaJual && hargaJual > 0 && !!tanggalJual && !!storeId && !jualSebelumBeli);
 
   function simpan() {
     setError(null);
@@ -88,10 +97,12 @@ function AccountForm({
         hargaBeli: hargaBeli ?? 0,
         tanggalBeli: tanggalBeli || null,
         hargaListing: listing,
-        status: sold ? undefined : status,
-        holdSampai: status === "Hold" ? holdSampai || null : null,
+        status: sold || jualSekarang ? undefined : (status as Exclude<AccountStatus, "Sold">),
+        holdSampai: status === "Hold" && !holdTanpaBatas ? holdSampai || null : null,
+        holdTanpaBatas: status === "Hold" && holdTanpaBatas,
         catatan,
-      });
+        penjualan: jualSekarang && hargaJual ? { hargaJual, tanggal: tanggalJual } : null,
+      }).catch(() => ({ ok: false as const, error: "Gagal menyimpan. Periksa koneksi lalu coba lagi." }));
       if (!res.ok) {
         setError(res.error);
         return;
@@ -114,7 +125,10 @@ function AccountForm({
         return;
       }
       onClose();
-      toast({ title: `Penjualan ${account.kode} dibatalkan`, description: `Status kembali ke ${res.data.status}` });
+      toast({
+        title: `Penjualan ${account.kode} dibatalkan`,
+        description: `Status kembali ke ${res.data.status}`,
+      });
     });
   }
 
@@ -145,10 +159,14 @@ function AccountForm({
       <AccountSummary account={account} />
 
       {sold ? (
-        <section aria-label="Penjualan" className="flex flex-col gap-2 rounded-xl border border-divider p-3.5">
+        <section
+          aria-label="Penjualan"
+          className="flex flex-col gap-2 rounded-xl border border-divider p-3.5"
+        >
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-sm font-semibold">
-              Terjual {account.tanggal_terjual ? formatDateLong(account.tanggal_terjual) : "(tanggal belum diisi)"}
+              Terjual{" "}
+              {account.tanggal_terjual ? formatDateLong(account.tanggal_terjual) : "(tanggal belum diisi)"}
             </span>
             <Amount currency="usd" value={account.harga_jual_usd} className="font-bold" />
           </div>
@@ -160,22 +178,78 @@ function AccountForm({
               Laba <Amount currency="idr" tone="profit" value={account.laba_idr} className="font-bold" />
             </span>
           </div>
-          <Button variant="outline" size="sm" className="self-start" onClick={batalkanPenjualan} disabled={pending}>
+          {account.harga_jual_usd === null && (
+            <p className="text-sm text-ink-muted">
+              Harga jual belum diisi, jadi belum masuk ke balance. Urungkan penjualan, lalu jual lagi dengan
+              harganya.
+            </p>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="self-start"
+            onClick={batalkanPenjualan}
+            disabled={pending}
+          >
             Urungkan penjualan
           </Button>
         </section>
       ) : (
         <div className="flex flex-col gap-3">
           <Field label="Status" htmlFor={`${ids}-status`}>
-            <Select id={`${ids}-status`} value={status} onChange={(e) => setStatus(e.target.value as AccountStatus)}>
-              {STATUS_OPTIONS.map((s) => (
+            <Select
+              id={`${ids}-status`}
+              value={status}
+              onChange={(e) => setStatus(e.target.value as AccountStatus)}
+            >
+              {statusOptions.map((s) => (
                 <option key={s} value={s}>
                   {s}
                 </option>
               ))}
             </Select>
           </Field>
+          {jualSekarang && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Harga jual" htmlFor={`${ids}-jual`}>
+                <MoneyInput
+                  id={`${ids}-jual`}
+                  currency="usd"
+                  placeholder="0"
+                  value={hargaJual}
+                  onValueChange={setHargaJual}
+                />
+              </Field>
+              <Field
+                label="Tanggal terjual"
+                htmlFor={`${ids}-tgl-jual`}
+                hint={jualSebelumBeli ? "Tidak boleh sebelum tanggal beli" : undefined}
+              >
+                <Input
+                  id={`${ids}-tgl-jual`}
+                  type="date"
+                  required
+                  min={tanggalBeli || undefined}
+                  max={today}
+                  value={tanggalJual}
+                  onChange={(e) => setTanggalJual(e.target.value)}
+                  className="font-semibold"
+                />
+              </Field>
+            </div>
+          )}
           {status === "Hold" && (
+            <SegmentedControl
+              aria-label="Lama hold"
+              value={holdTanpaBatas ? "tanpa-batas" : "tanggal"}
+              onValueChange={(v) => setHoldTanpaBatas(v === "tanpa-batas")}
+              options={[
+                { value: "tanggal", label: "Sampai tanggal" },
+                { value: "tanpa-batas", label: "Tanpa batas" },
+              ]}
+            />
+          )}
+          {status === "Hold" && !holdTanpaBatas && (
             <Field
               label="Ditahan sampai"
               htmlFor={`${ids}-hold`}
@@ -219,7 +293,13 @@ function AccountForm({
       </div>
 
       <Field label="Isi akun" htmlFor={`${ids}-isi`}>
-        <Textarea id={`${ids}-isi`} rows={3} value={isi} onChange={(e) => setIsi(e.target.value)} />
+        <Textarea
+          id={`${ids}-isi`}
+          rows={3}
+          placeholder="Belum ada isi"
+          value={isi}
+          onChange={(e) => setIsi(e.target.value)}
+        />
         {(tags.jumlah !== null || tags.tags.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-xs text-ink-muted">Terbaca:</span>
@@ -232,7 +312,12 @@ function AccountForm({
       </Field>
 
       <Field label="Username" htmlFor={`${ids}-user`} optional>
-        <Input id={`${ids}-user`} autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} />
+        <Input
+          id={`${ids}-user`}
+          autoComplete="off"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+        />
       </Field>
 
       <div className="flex flex-col gap-1.5">
@@ -312,7 +397,7 @@ function AccountForm({
           </p>
         )}
         <div className="flex gap-2">
-          {!sold && status !== "HB" && account.status !== "HB" && (
+          {!sold && status !== "HB" && status !== "Sold" && account.status !== "HB" && (
             <Button
               variant="secondary"
               className="h-action flex-1 rounded-xl"
@@ -322,8 +407,14 @@ function AccountForm({
               Tandai terjual
             </Button>
           )}
-          <Button type="submit" variant="primary" size="lg" className="flex-1" disabled={pending}>
-            {pending ? "Menyimpan…" : "Simpan perubahan"}
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            className="flex-1"
+            disabled={pending || !jualSiap}
+          >
+            {pending ? "Menyimpan…" : jualSekarang ? "Simpan sebagai Sold" : "Simpan perubahan"}
           </Button>
         </div>
       </div>

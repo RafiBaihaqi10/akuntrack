@@ -200,6 +200,7 @@ export function buildAccounts(today: string): AccountRow[] {
       harga_listing_usd: null,
       status: s.status,
       hold_sampai: holdSampai,
+      hold_tanpa_batas: false,
       tanggal_hb: s.status === "HB" ? addDays(today, -3) : null,
       catatan: null,
       is_legacy: s.beliHari === null,

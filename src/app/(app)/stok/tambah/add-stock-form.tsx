@@ -37,7 +37,7 @@ type AddStockFormProps = {
 };
 
 type Mode = "satu" | "banyak";
-type StatusAwal = "Belum Post" | "Belum Sold" | "Hold";
+type StatusAwal = "Belum Post" | "Belum Sold" | "Hold" | "Sold";
 
 /** Last game and store, remembered per browser so repeated entry is faster. */
 const MEMORY_KEY = "akuntrack:tambah-stok";
@@ -66,6 +66,9 @@ export function AddStockForm({
   const [listing, setListing] = useState<number | null>(null);
   const [tanggal, setTanggal] = useState(today);
   const [statusAwal, setStatusAwal] = useState<StatusAwal>("Belum Post");
+  const [lamaHold, setLamaHold] = useState<"default" | "tanpa-batas">("default");
+  const [hargaJual, setHargaJual] = useState<number | null>(null);
+  const [tanggalJual, setTanggalJual] = useState(today);
   const [username, setUsername] = useState("");
   const [daftar, setDaftar] = useState("");
   const [catatan, setCatatan] = useState("");
@@ -73,7 +76,10 @@ export function AddStockForm({
 
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(MEMORY_KEY) ?? "{}") as { gameId?: string; storeId?: string };
+      const saved = JSON.parse(localStorage.getItem(MEMORY_KEY) ?? "{}") as {
+        gameId?: string;
+        storeId?: string;
+      };
       // Restoring a per-browser preference after hydration; the server cannot know it.
       /* eslint-disable react-hooks/set-state-in-effect */
       if (saved.gameId && games.some((g) => g.id === saved.gameId)) setGameId(saved.gameId);
@@ -89,7 +95,10 @@ export function AddStockForm({
   const beli = grind ? 0 : (hargaBeli ?? 0);
   const parsed = parseIsiAkun(isi);
   const jumlah = jumlahVarianFor(parsed, game?.satuan_varian ?? null);
-  const hitung = saleBreakdown(listing ?? 0, beli, rates);
+  const sold = statusAwal === "Sold";
+  // Already sold: the receipt shows the real sale instead of the listing
+  const hargaHitung = sold ? hargaJual : listing;
+  const hitung = saleBreakdown(hargaHitung ?? 0, beli, rates);
 
   const lines = daftar
     .split("\n")
@@ -104,7 +113,9 @@ export function AddStockForm({
     .filter((u): u is string => !!u)
     .map((u) => ({ u, kode: existing.get(u.toLowerCase()) }))
     .filter((d) => d.kode);
-  const dobelDiDaftar = lines.filter((l, i) => lines.findIndex((x) => x.toLowerCase() === l.toLowerCase()) !== i);
+  const dobelDiDaftar = lines.filter(
+    (l, i) => lines.findIndex((x) => x.toLowerCase() === l.toLowerCase()) !== i,
+  );
 
   const batas = game ? batasBeli(samples, game, jumlah, rates, targetMarginPct) : null;
   const batasInfo = batas
@@ -118,14 +129,25 @@ export function AddStockForm({
                 ? "Harga beli ini aman."
                 : "Harga beli ini di atas batas."
         }`,
-        tone: hargaBeli === null && !grind ? "text-ink-muted" : grind || beli <= batas.batas ? "text-profit" : "text-loss",
+        tone:
+          hargaBeli === null && !grind
+            ? "text-ink-muted"
+            : grind || beli <= batas.batas
+              ? "text-profit"
+              : "text-loss",
       }
     : {
         text: "Belum cukup data penjualan untuk game ini, jadi batas beli belum bisa dihitung.",
         tone: "text-ink-muted",
       };
 
-  const siap = !!gameId && !!storeId && isi.trim().length > 0 && !!tanggal && (mode === "satu" || lines.length > 0);
+  const jualSebelumBeli = sold && !!tanggal && !!tanggalJual && tanggalJual < tanggal;
+  const siap =
+    !!gameId &&
+    !!storeId &&
+    !!tanggal &&
+    (mode === "satu" || lines.length > 0) &&
+    (!sold || (!!hargaJual && hargaJual > 0 && !!tanggalJual && !jualSebelumBeli));
   const simpanLabel = pending
     ? "Menyimpan…"
     : mode === "satu"
@@ -147,6 +169,8 @@ export function AddStockForm({
         tanggalBeli: tanggal,
         hargaListing: listing,
         status: statusAwal,
+        holdTanpaBatas: lamaHold === "tanpa-batas",
+        penjualan: sold && hargaJual ? { hargaJual, tanggal: tanggalJual } : null,
         catatan,
         usernames: akunBaru,
       });
@@ -156,7 +180,9 @@ export function AddStockForm({
       }
       const kode = res.data.map((r) => r.kode);
       toast({
-        title: kode.length === 1 ? `${kode[0]} ditambahkan` : `${kode.length} akun ditambahkan`,
+        title:
+          (kode.length === 1 ? `${kode[0]} ditambahkan` : `${kode.length} akun ditambahkan`) +
+          (sold ? " sebagai Sold" : ""),
         description: kode.length > 1 ? `${kode[0]} sampai ${kode[kode.length - 1]}` : undefined,
       });
       try {
@@ -168,6 +194,7 @@ export function AddStockForm({
       setIsi("");
       setHargaBeli(null);
       setListing(null);
+      setHargaJual(null);
       setUsername("");
       setDaftar("");
       setCatatan("");
@@ -222,7 +249,10 @@ export function AddStockForm({
             <X aria-hidden className="size-5.5" strokeWidth={1.9} />
           </Link>
           <div className="flex flex-col gap-1.5">
-            <Link href="/stok" className="hidden min-h-7 items-center gap-1.5 text-sm font-semibold no-underline lg:flex">
+            <Link
+              href="/stok"
+              className="hidden min-h-7 items-center gap-1.5 text-sm font-semibold no-underline lg:flex"
+            >
               <ArrowLeft aria-hidden className="size-4" strokeWidth={2} />
               Kembali ke stok
             </Link>
@@ -234,7 +264,10 @@ export function AddStockForm({
         <div className="lg:hidden">{modeControl}</div>
 
         <div className="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_400px]">
-          <section aria-label="Data akun" className="flex flex-col gap-4.5 lg:gap-5 lg:rounded-2xl lg:bg-surface lg:p-7">
+          <section
+            aria-label="Data akun"
+            className="flex flex-col gap-4.5 lg:gap-5 lg:rounded-2xl lg:bg-surface lg:p-7"
+          >
             <div className="grid gap-4.5 lg:grid-cols-2 lg:gap-4">
               <Field label="Game" htmlFor={`${ids}-game`}>
                 <Select id={`${ids}-game`} value={gameId} onChange={(e) => setGameId(e.target.value)}>
@@ -276,12 +309,20 @@ export function AddStockForm({
               </Field>
             )}
 
-            <Field label="Isi akun" htmlFor={`${ids}-isi`}>
+            <Field
+              label="Isi akun"
+              htmlFor={`${ids}-isi`}
+              optional
+              hint={isi.trim() ? undefined : 'Kosong akan tercatat sebagai "Belum ada isi"'}
+            >
               <Textarea
                 id={`${ids}-isi`}
                 rows={2}
-                required
-                placeholder={game?.satuan_varian ? `mis. 5 ${game.satuan_varian} (Madara + Ichigo)` : "mis. Jinko + Kisuki"}
+                placeholder={
+                  game?.satuan_varian
+                    ? `mis. 5 ${game.satuan_varian} (Madara + Ichigo)`
+                    : "mis. Jinko + Kisuki"
+                }
                 value={isi}
                 onChange={(e) => setIsi(e.target.value)}
               />
@@ -289,7 +330,9 @@ export function AddStockForm({
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-xs text-ink-muted">Terbaca:</span>
                   {parsed.jumlah !== null && (
-                    <Badge tone={jumlah !== null ? "teal" : "tag"}>{`${parsed.jumlah} ${parsed.satuan}`}</Badge>
+                    <Badge
+                      tone={jumlah !== null ? "teal" : "tag"}
+                    >{`${parsed.jumlah} ${parsed.satuan}`}</Badge>
                   )}
                   {parsed.tags.map((t) => (
                     <Badge key={t}>{t}</Badge>
@@ -310,7 +353,13 @@ export function AddStockForm({
                 />
               </Field>
               <Field label="Harga listing" htmlFor={`${ids}-listing`} optional>
-                <MoneyInput id={`${ids}-listing`} currency="usd" placeholder="0" value={listing} onValueChange={setListing} />
+                <MoneyInput
+                  id={`${ids}-listing`}
+                  currency="usd"
+                  placeholder="0"
+                  value={listing}
+                  onValueChange={setListing}
+                />
               </Field>
             </div>
 
@@ -326,7 +375,11 @@ export function AddStockForm({
                     className="gap-1.5 lg:gap-2"
                   />
                 ) : (
-                  <Select aria-labelledby={`${ids}-toko`} value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+                  <Select
+                    aria-labelledby={`${ids}-toko`}
+                    value={storeId}
+                    onChange={(e) => setStoreId(e.target.value)}
+                  >
                     {stores.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.nama}
@@ -360,10 +413,61 @@ export function AddStockForm({
                   {
                     value: "Hold",
                     label: "Hold",
-                    description: `sampai ${formatDateShort(addDays(tanggal || today, holdDefaultHari))}`,
+                    description:
+                      lamaHold === "tanpa-batas"
+                        ? "tanpa batas"
+                        : `sampai ${formatDateShort(addDays(tanggal || today, holdDefaultHari))}`,
                   },
+                  { value: "Sold", label: "Sudah Sold" },
                 ]}
+                className="grid-flow-row grid-cols-2 lg:grid-flow-col lg:grid-cols-none"
               />
+              {statusAwal === "Hold" && (
+                <SegmentedControl
+                  aria-label="Lama hold"
+                  value={lamaHold}
+                  onValueChange={setLamaHold}
+                  options={[
+                    {
+                      value: "default",
+                      label: holdDefaultHari === 7 ? "1 minggu" : `${holdDefaultHari} hari`,
+                    },
+                    { value: "tanpa-batas", label: "Tanpa batas" },
+                  ]}
+                />
+              )}
+              {sold && (
+                <div className="mt-1.5 grid grid-cols-2 gap-3 lg:gap-4">
+                  <Field
+                    label={mode === "satu" ? "Harga jual" : "Harga jual per akun"}
+                    htmlFor={`${ids}-jual`}
+                  >
+                    <MoneyInput
+                      id={`${ids}-jual`}
+                      currency="usd"
+                      placeholder="0"
+                      value={hargaJual}
+                      onValueChange={setHargaJual}
+                    />
+                  </Field>
+                  <Field
+                    label="Tanggal terjual"
+                    htmlFor={`${ids}-tgl-jual`}
+                    hint={jualSebelumBeli ? "Tidak boleh sebelum tanggal beli" : undefined}
+                  >
+                    <Input
+                      id={`${ids}-tgl-jual`}
+                      type="date"
+                      required
+                      min={tanggal || undefined}
+                      max={today}
+                      value={tanggalJual}
+                      onChange={(e) => setTanggalJual(e.target.value)}
+                      className="font-semibold"
+                    />
+                  </Field>
+                </div>
+              )}
             </div>
 
             {mode === "satu" ? (
@@ -384,7 +488,8 @@ export function AddStockForm({
                 />
                 {dobel[0] && (
                   <p className="text-xs font-semibold text-warn-ink">
-                    Username ini sudah tercatat di {dobel[0].kode}. Tetap bisa disimpan kalau memang akun lain.
+                    Username ini sudah tercatat di {dobel[0].kode}. Tetap bisa disimpan kalau memang akun
+                    lain.
                   </p>
                 )}
               </Field>
@@ -410,7 +515,8 @@ export function AddStockForm({
                         .slice(0, 3)
                         .map((d) => `${d.u} (${d.kode})`)
                         .join(", ")}${dobel.length > 3 ? ` dan ${dobel.length - 3} lainnya` : ""}. `}
-                    {dobelDiDaftar.length > 0 && `Ditulis dua kali: ${Array.from(new Set(dobelDiDaftar)).join(", ")}. `}
+                    {dobelDiDaftar.length > 0 &&
+                      `Ditulis dua kali: ${Array.from(new Set(dobelDiDaftar)).join(", ")}. `}
                     Tetap bisa disimpan.
                   </p>
                 )}
@@ -429,9 +535,23 @@ export function AddStockForm({
 
           {/* Desktop: receipt, ceiling and actions on the right */}
           <aside className="sticky top-7 hidden flex-col gap-4 lg:flex">
-            <Receipt title={listing ? `Kalau laku ${formatUsd(listing)}` : "Kalau laku"} titleId={`${ids}-preview`}>
+            <Receipt
+              title={
+                sold
+                  ? hargaJual
+                    ? `Terjual ${formatUsd(hargaJual)}`
+                    : "Terjual"
+                  : listing
+                    ? `Kalau laku ${formatUsd(listing)}`
+                    : "Kalau laku"
+              }
+              titleId={`${ids}-preview`}
+            >
               <ReceiptRows>
-                <ReceiptRow label="Harga listing" value={<Amount currency="usd" value={hitung.hargaJual} />} />
+                <ReceiptRow
+                  label={sold ? "Harga jual" : "Harga listing"}
+                  value={<Amount currency="usd" value={hitung.hargaJual} />}
+                />
                 <ReceiptRow
                   op="−"
                   label={`Admin Eldorado ${rates.adminPct}%`}
@@ -447,12 +567,22 @@ export function AddStockForm({
                   label={`${formatIdr(rupiahPerNetDollar(rates))} per dolar`}
                   value={formatIdr(hitung.estimasi)}
                 />
-                <ReceiptRow op="−" label={mode === "satu" ? "Harga beli" : "Harga beli per akun"} value={formatIdr(beli)} />
+                <ReceiptRow
+                  op="−"
+                  label={mode === "satu" ? "Harga beli" : "Harga beli per akun"}
+                  value={formatIdr(beli)}
+                />
               </ReceiptRows>
               <ReceiptDivider />
               <ReceiptTotal
                 label="Laba"
-                value={listing ? <Amount currency="idr" tone="profit" value={hitung.laba} /> : <span className="text-ink-muted">—</span>}
+                value={
+                  hargaHitung ? (
+                    <Amount currency="idr" tone="profit" value={hitung.laba} />
+                  ) : (
+                    <span className="text-ink-muted">—</span>
+                  )
+                }
               />
             </Receipt>
             <p className={cn("px-1 text-sm font-semibold", batasInfo.tone)}>{batasInfo.text}</p>
@@ -470,14 +600,22 @@ export function AddStockForm({
       {/* Phone: live calculation and the save button pinned to the bottom */}
       <footer className="sticky bottom-0 z-20 flex flex-col gap-3 border-t border-divider bg-surface px-gutter pt-3.5 pb-[max(1.25rem,env(safe-area-inset-bottom))] lg:hidden">
         <div className="flex flex-col gap-2">
-          <span className="text-sm font-semibold">{listing ? `Kalau laku ${formatUsd(listing)}` : "Isi harga listing untuk lihat laba"}</span>
+          <span className="text-sm font-semibold">
+            {sold
+              ? hargaJual
+                ? `Terjual ${formatUsd(hargaJual)}`
+                : "Isi harga jual untuk lihat laba"
+              : listing
+                ? `Kalau laku ${formatUsd(listing)}`
+                : "Isi harga listing untuk lihat laba"}
+          </span>
           <div className="grid grid-cols-3 gap-2">
             <MiniStat label="Net ke balance" value={<Amount currency="usd" value={hitung.net} />} />
             <MiniStat label="Jadi rupiah" value={formatIdr(hitung.estimasi)} />
             <MiniStat
               label="Laba"
               value={
-                listing ? (
+                hargaHitung ? (
                   <Amount currency="idr" tone="profit" value={hitung.laba} className="font-extrabold" />
                 ) : (
                   <span className="text-ink-muted">—</span>

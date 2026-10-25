@@ -158,6 +158,20 @@ ok(
   h.hold_sampai.toISOString().slice(0, 10) === "2026-10-17",
   String(h.hold_sampai.toISOString().slice(0, 10)),
 );
+const ht = await ins(U1, {
+  game_id: VBL,
+  store_id: ZERON,
+  harga_beli_idr: 95000,
+  tanggal_beli: "2026-01-01",
+  status: "Hold",
+  hold_tanpa_batas: true,
+  hold_sampai: "2026-01-08",
+});
+ok("Hold tanpa batas keeps hold_sampai empty", ht.hold_sampai === null, String(ht.hold_sampai));
+const htv = await one(U1, `select hold_tanpa_batas, hold_lewat from v_accounts where id=$1`, [ht.id]);
+ok("Hold tanpa batas is never hold_lewat", htv.hold_tanpa_batas === true && htv.hold_lewat === false, JSON.stringify(htv));
+const htl = await one(U1, `update accounts set status='Belum Sold' where id=$1 returning hold_tanpa_batas`, [ht.id]);
+ok("leaving Hold clears hold_tanpa_batas", htl.hold_tanpa_batas === false);
 let err = await asTx(U1, `insert into accounts (game_id, store_id) values ('${AV}', '${ZERON}')`);
 ok("tanggal beli wajib for new stock", err?.includes("accounts_tanggal_beli_wajib"), err);
 err = await asTx(U1, `insert into accounts (game_id, is_legacy, kode) values ('${AV}', true, 'AV-0063')`);
@@ -199,6 +213,27 @@ ok(
   back.s === "Belum Post" && a2now.status === "Belum Post" && a2now.n === 0 && a2now.hist === 1,
   JSON.stringify(a2now),
 );
+// Excel import: inserted already Sold with a legacy sale missing its price
+const imp = await one(
+  U1,
+  `with a as (insert into accounts (game_id, is_legacy, kode, status) values ($1, true, 'AV-0099', 'Sold') returning id),
+        s as (insert into sales (account_id, is_legacy, admin_pct, potongan_tarik_pct, kurs_payoneer) select id, true, 10, 2, 17000 from a)
+   select id from a`,
+  [AV],
+);
+const impBack = await one(U1, `select undo_last_status_change($1) s`, [imp.id]);
+const impNow = await one(
+  U1,
+  `select status, (select count(*)::int from sales where account_id=$1) n from accounts where id=$1`,
+  [imp.id],
+);
+ok(
+  "undo imported Sold → Belum Sold removes the sale",
+  impBack.s === "Belum Sold" && impNow.status === "Belum Sold" && impNow.n === 0,
+  JSON.stringify(impNow),
+);
+err = await asTx(U1, `select undo_last_status_change('${imp.id}')`);
+ok("nothing left to undo after that", err?.includes("Tidak ada perubahan status"), err);
 
 // --- Withdrawals: $100 → Rp1.504.000 at Payoneer 16.000 → koreksi −Rp32.000
 await as(U1, `insert into balance_adjustments (store_id, usd, alasan) values ($1, 100, 'saldo awal uji')`, [

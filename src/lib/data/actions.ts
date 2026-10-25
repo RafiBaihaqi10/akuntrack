@@ -43,12 +43,16 @@ function friendly(error: { message: string; code?: string }) {
     if (error.message.includes(name)) return message;
   }
   // Messages raised by our own functions are already Indonesian.
-  const ours = ["23514", "23503", "P0001", "P0002"].includes(error.code ?? "") && !error.message.includes("violates");
+  const ours =
+    ["23514", "23503", "P0001", "P0002"].includes(error.code ?? "") && !error.message.includes("violates");
   return ours ? error.message : "Gagal menyimpan. Coba lagi sebentar lagi.";
 }
 
 /** Runs an action body, refreshes the page data on success and turns errors into messages. */
-async function run<T>(fn: () => Promise<T>, changed: (data: T) => boolean = () => true): Promise<ActionResult<T>> {
+async function run<T>(
+  fn: () => Promise<T>,
+  changed: (data: T) => boolean = () => true,
+): Promise<ActionResult<T>> {
   try {
     const data = await fn();
     if (changed(data)) refresh();
@@ -93,25 +97,56 @@ async function satuanOf(supabase: Awaited<ReturnType<typeof authedClient>>, game
   return game.satuan_varian as string | null;
 }
 
-const NEW_STATUSES = ["Belum Post", "Belum Sold", "Hold"] as const;
+const NEW_STATUSES = ["Belum Post", "Belum Sold", "Hold", "Sold"] as const;
 
-const newAccounts = z.object({
-  gameId: id,
-  storeId: z.uuid("Pilih toko"),
-  isiAkun: z.string().trim().min(1, "Isi akun wajib diisi").max(1000, "Isi akun terlalu panjang"),
-  sumber: z.enum(ACCOUNT_SOURCES),
-  dibeliDari: optionalText,
-  hargaBeli: rupiah,
-  tanggalBeli: notFuture("Tanggal beli"),
-  hargaListing: dollars.nullable(),
-  status: z.enum(NEW_STATUSES),
-  catatan: optionalText,
-  /** One entry per account; null means "username belum diisi". */
-  usernames: z
-    .array(z.string().trim().max(100).nullable())
-    .min(1, "Isi minimal satu username")
-    .max(200, "Maksimal 200 akun sekaligus"),
+/** Sale details entered together with the account (status Sold straight away). */
+const penjualan = z.object({
+  hargaJual: z.number().positive("Harga jual wajib diisi").max(100_000, "Angka dolar terlalu besar"),
+  tanggal: notFuture("Tanggal terjual"),
 });
+
+async function sellAccount(
+  supabase: Awaited<ReturnType<typeof authedClient>>,
+  accountId: string,
+  storeId: string,
+  p: z.output<typeof penjualan>,
+) {
+  return check(
+    await supabase.rpc("mark_sold", {
+      p_account_id: accountId,
+      p_harga_jual_usd: p.hargaJual,
+      p_tanggal_terjual: p.tanggal,
+      p_store_id: storeId,
+    }),
+  );
+}
+
+const newAccounts = z
+  .object({
+    gameId: id,
+    storeId: z.uuid("Pilih toko"),
+    isiAkun: z.string().trim().max(1000, "Isi akun terlalu panjang"),
+    sumber: z.enum(ACCOUNT_SOURCES),
+    dibeliDari: optionalText,
+    hargaBeli: rupiah,
+    tanggalBeli: notFuture("Tanggal beli"),
+    hargaListing: dollars.nullable(),
+    status: z.enum(NEW_STATUSES),
+    /** Hold with no end date instead of the 1-week default. */
+    holdTanpaBatas: z.boolean().default(false),
+    catatan: optionalText,
+    /** Required when status is Sold: the account was already sold before it was entered. */
+    penjualan: penjualan.nullish(),
+    /** One entry per account; null means "username belum diisi". */
+    usernames: z
+      .array(z.string().trim().max(100).nullable())
+      .min(1, "Isi minimal satu username")
+      .max(200, "Maksimal 200 akun sekaligus"),
+  })
+  .refine((v) => v.status !== "Sold" || v.penjualan, { message: "Isi harga jual dan tanggal terjual" })
+  .refine((v) => !v.penjualan || v.status !== "Sold" || v.penjualan.tanggal >= v.tanggalBeli, {
+    message: "Tanggal terjual tidak boleh sebelum tanggal beli",
+  });
 
 export type NewAccountsInput = z.input<typeof newAccounts>;
 
@@ -133,11 +168,31 @@ export async function createAccounts(input: NewAccountsInput) {
       harga_beli_idr: v.sumber === "Grind" ? 0 : v.hargaBeli,
       tanggal_beli: v.tanggalBeli,
       harga_listing_usd: v.hargaListing,
-      status: v.status,
+      // Sold needs a sale row, so it goes in as listed and is sold right after
+      status: v.status === "Sold" ? "Belum Sold" : v.status,
+      hold_tanpa_batas: v.status === "Hold" && v.holdTanpaBatas,
       catatan: v.catatan,
     }));
-    const created = check(await supabase.from("accounts").insert(rows).select("id, kode"));
-    return created as { id: string; kode: string }[];
+    const created = check(await supabase.from("accounts").insert(rows).select("id, kode")) as {
+      id: string;
+      kode: string;
+    }[];
+    if (v.status === "Sold" && v.penjualan) {
+      try {
+        for (const row of created) await sellAccount(supabase, row.id, v.storeId, v.penjualan);
+      } catch (e) {
+        // All or nothing: do not leave half the batch behind as unsold stock
+        await supabase
+          .from("accounts")
+          .delete()
+          .in(
+            "id",
+            created.map((r) => r.id),
+          );
+        throw e;
+      }
+    }
+    return created;
   });
 }
 
@@ -145,7 +200,8 @@ const EDITABLE_STATUSES = ACCOUNT_STATUSES.filter((s) => s !== "Sold") as Exclud
 
 const accountEdit = z.object({
   storeId: z.uuid("Pilih toko").nullable(),
-  isiAkun: z.string().trim().min(1, "Isi akun wajib diisi").max(1000, "Isi akun terlalu panjang"),
+  /** May stay empty; the app shows "Belum ada isi". */
+  isiAkun: z.string().trim().max(1000, "Isi akun terlalu panjang"),
   username: optionalText,
   sumber: z.enum(ACCOUNT_SOURCES),
   dibeliDari: optionalText,
@@ -155,7 +211,10 @@ const accountEdit = z.object({
   /** Omitted for Sold accounts: a sale is changed through undo, not by editing. */
   status: z.enum(EDITABLE_STATUSES as [string, ...string[]]).optional(),
   holdSampai: isoDate.nullable(),
+  holdTanpaBatas: z.boolean().default(false),
   catatan: optionalText,
+  /** Sells the account in the same save; status is then left out. */
+  penjualan: penjualan.nullish(),
 });
 
 export type AccountEditInput = z.input<typeof accountEdit>;
@@ -165,15 +224,30 @@ export async function updateAccount(accountId: string, input: AccountEditInput) 
     const v = accountEdit.parse(input);
     const supabase = await authedClient();
     const current = check(
-      await supabase.from("accounts").select("status, game_id, kode").eq("id", id.parse(accountId)).maybeSingle(),
+      await supabase
+        .from("accounts")
+        .select("status, game_id, kode")
+        .eq("id", id.parse(accountId))
+        .maybeSingle(),
     );
     if (!current) throw new ActionError("Akun tidak ditemukan");
     if (current.status === "Sold" && v.status && v.status !== "Sold") {
       throw new ActionError("Akun sudah terjual. Urungkan penjualannya dulu untuk mengubah status.");
     }
+    if (v.penjualan) {
+      if (current.status === "Sold" || current.status === "HB") {
+        throw new ActionError(`Akun ${current.kode} sudah berstatus ${current.status}`);
+      }
+      if (!v.storeId) throw new ActionError("Pilih toko tempat akun terjual");
+      if (v.tanggalBeli && v.penjualan.tanggal < v.tanggalBeli) {
+        throw new ActionError("Tanggal terjual tidak boleh sebelum tanggal beli");
+      }
+    }
 
     const parsed = parseIsiAkun(v.isiAkun);
-    const status = (current.status === "Sold" ? "Sold" : (v.status ?? current.status)) as AccountStatus;
+    const status = (
+      current.status === "Sold" || v.penjualan ? current.status : (v.status ?? current.status)
+    ) as AccountStatus;
     check(
       await supabase
         .from("accounts")
@@ -189,11 +263,16 @@ export async function updateAccount(accountId: string, input: AccountEditInput) 
           tanggal_beli: v.tanggalBeli,
           harga_listing_usd: v.hargaListing,
           status,
-          hold_sampai: status === "Hold" ? v.holdSampai : null,
+          hold_sampai: status === "Hold" && !v.holdTanpaBatas ? v.holdSampai : null,
+          hold_tanpa_batas: status === "Hold" && v.holdTanpaBatas,
           catatan: v.catatan,
         })
         .eq("id", accountId),
     );
+    if (v.penjualan && v.storeId) {
+      await sellAccount(supabase, accountId, v.storeId, v.penjualan);
+      return { kode: current.kode as string, status: "Sold" as AccountStatus, statusChanged: true };
+    }
     return { kode: current.kode as string, status, statusChanged: status !== current.status };
   });
 }
@@ -203,7 +282,12 @@ export async function changeStatus(accountId: string, status: Exclude<AccountSta
     const supabase = await authedClient();
     const s = z.enum(EDITABLE_STATUSES as [string, ...string[]]).parse(status);
     const row = check(
-      await supabase.from("accounts").update({ status: s }).eq("id", id.parse(accountId)).select("kode").maybeSingle(),
+      await supabase
+        .from("accounts")
+        .update({ status: s })
+        .eq("id", id.parse(accountId))
+        .select("kode")
+        .maybeSingle(),
     );
     if (!row) throw new ActionError("Akun tidak ditemukan");
     return { kode: row.kode as string };
@@ -232,14 +316,10 @@ export async function markSold(input: z.input<typeof sale>) {
   return run(async () => {
     const v = sale.parse(input);
     const supabase = await authedClient();
-    const row = check(
-      await supabase.rpc("mark_sold", {
-        p_account_id: v.accountId,
-        p_harga_jual_usd: v.hargaJual,
-        p_tanggal_terjual: v.tanggal,
-        p_store_id: v.storeId,
-      }),
-    );
+    const row = await sellAccount(supabase, v.accountId, v.storeId, {
+      hargaJual: v.hargaJual,
+      tanggal: v.tanggal,
+    });
     return { netUsd: Number(row.net_usd), labaIdr: Number(row.laba_idr) };
   });
 }
@@ -248,7 +328,9 @@ export async function markSold(input: z.input<typeof sale>) {
 export async function undoStatus(accountId: string) {
   return run(async () => {
     const supabase = await authedClient();
-    const restored = check(await supabase.rpc("undo_last_status_change", { p_account_id: id.parse(accountId) }));
+    const restored = check(
+      await supabase.rpc("undo_last_status_change", { p_account_id: id.parse(accountId) }),
+    );
     return { status: restored as AccountStatus };
   });
 }
@@ -295,7 +377,9 @@ export async function completeWithdrawal(input: z.input<typeof completion>) {
     const supabase = await authedClient();
     const patch: Record<string, unknown> = { idr_diterima: v.idr };
     if (v.tanggal) patch.tanggal = v.tanggal;
-    const row = check(await supabase.from("withdrawals").update(patch).eq("id", v.id).select("id").maybeSingle());
+    const row = check(
+      await supabase.from("withdrawals").update(patch).eq("id", v.id).select("id").maybeSingle(),
+    );
     if (!row) throw new ActionError("Penarikan tidak ditemukan");
     return null;
   });
@@ -328,7 +412,8 @@ export async function addAdjustment(input: z.input<typeof adjustment>) {
 // Pengaturan
 // ---------------------------------------------------------------------------
 
-const pct = (label: string) => z.number().min(0, `${label} tidak boleh minus`).max(100, `${label} maksimal 100%`);
+const pct = (label: string) =>
+  z.number().min(0, `${label} tidak boleh minus`).max(100, `${label} maksimal 100%`);
 
 const settingsInput = z.object({
   mode_kurs: z.enum(["otomatis", "manual"]),
@@ -367,38 +452,43 @@ const KURS_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 /** Updates kurs pasar from exchangerate-api (open endpoint, no key needed). */
 export async function refreshKursPasar(force = false) {
-  return run(async () => {
-    const supabase = await authedClient();
-    const current = check(
-      await supabase.from("settings").select("user_id, kurs_pasar, kurs_pasar_diperbarui").maybeSingle(),
-    );
-    if (!current) throw new ActionError("Pengaturan belum ada");
-    const last = current.kurs_pasar_diperbarui ? Date.parse(current.kurs_pasar_diperbarui) : 0;
-    if (!force && Date.now() - last < KURS_MAX_AGE_MS) {
-      return { kursPasar: Number(current.kurs_pasar), updated: false };
-    }
+  return run(
+    async () => {
+      const supabase = await authedClient();
+      const current = check(
+        await supabase.from("settings").select("user_id, kurs_pasar, kurs_pasar_diperbarui").maybeSingle(),
+      );
+      if (!current) throw new ActionError("Pengaturan belum ada");
+      const last = current.kurs_pasar_diperbarui ? Date.parse(current.kurs_pasar_diperbarui) : 0;
+      if (!force && Date.now() - last < KURS_MAX_AGE_MS) {
+        return { kursPasar: Number(current.kurs_pasar), updated: false };
+      }
 
-    let idr: number | undefined;
-    try {
-      const res = await fetch("https://open.er-api.com/v6/latest/USD", { signal: AbortSignal.timeout(8000) });
-      const body = (await res.json()) as { result?: string; rates?: Record<string, number> };
-      idr = body.result === "success" ? body.rates?.IDR : undefined;
-    } catch {
-      idr = undefined;
-    }
-    if (!idr || !Number.isFinite(idr) || idr < 1000) {
-      throw new ActionError("Kurs pasar gagal diambil. Coba lagi nanti atau atur kurs sendiri.");
-    }
+      let idr: number | undefined;
+      try {
+        const res = await fetch("https://open.er-api.com/v6/latest/USD", {
+          signal: AbortSignal.timeout(8000),
+        });
+        const body = (await res.json()) as { result?: string; rates?: Record<string, number> };
+        idr = body.result === "success" ? body.rates?.IDR : undefined;
+      } catch {
+        idr = undefined;
+      }
+      if (!idr || !Number.isFinite(idr) || idr < 1000) {
+        throw new ActionError("Kurs pasar gagal diambil. Coba lagi nanti atau atur kurs sendiri.");
+      }
 
-    const kursPasar = Math.round(idr);
-    check(
-      await supabase
-        .from("settings")
-        .update({ kurs_pasar: kursPasar, kurs_pasar_diperbarui: new Date().toISOString() })
-        .eq("user_id", current.user_id),
-    );
-    return { kursPasar, updated: true };
-  }, (r) => r.updated);
+      const kursPasar = Math.round(idr);
+      check(
+        await supabase
+          .from("settings")
+          .update({ kurs_pasar: kursPasar, kurs_pasar_diperbarui: new Date().toISOString() })
+          .eq("user_id", current.user_id),
+      );
+      return { kursPasar, updated: true };
+    },
+    (r) => r.updated,
+  );
 }
 
 const gameInput = z.object({

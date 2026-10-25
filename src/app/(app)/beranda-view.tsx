@@ -11,7 +11,14 @@ import { CellStack, TBody, Td, TFoot, TfCell, Th, THead, Table, Tr } from "@/com
 import { buildWarnings } from "@/lib/analytics";
 import { ratesFrom, rupiahPerNetDollar, sum, withdrawalEstimate } from "@/lib/calc";
 import { addDays, formatStampWib, formatWeekLong, mondayOf } from "@/lib/dates";
-import type { AccountRow, GamePerformance, Settings, StoreBalance, WeeklyReport, Withdrawal } from "@/lib/db-types";
+import type {
+  AccountRow,
+  GamePerformance,
+  Settings,
+  StoreBalance,
+  WeeklyReport,
+  Withdrawal,
+} from "@/lib/db-types";
 import { formatDateShort, formatIdr, formatIdrCompact, formatUsd } from "@/lib/format";
 
 export type BerandaData = {
@@ -26,7 +33,16 @@ export type BerandaData = {
   now: string;
 };
 
-export function BerandaView({ settings, weekly, balances, accounts, perf, withdrawals, today, now }: BerandaData) {
+export function BerandaView({
+  settings,
+  weekly,
+  balances,
+  accounts,
+  perf,
+  withdrawals,
+  today,
+  now,
+}: BerandaData) {
   const monday = mondayOf(today);
   const sunday = addDays(monday, 6);
   const rates = ratesFrom(settings);
@@ -121,7 +137,14 @@ export function BerandaView({ settings, weekly, balances, accounts, perf, withdr
             <ReceiptTotal
               size="hero"
               label="Laba"
-              value={<Amount currency="idr" tone="profit" value={week?.laba ?? 0} className="lg:text-[36px] lg:leading-[42px]" />}
+              value={
+                <Amount
+                  currency="idr"
+                  tone="profit"
+                  value={week?.laba ?? 0}
+                  className="lg:text-[36px] lg:leading-[42px]"
+                />
+              }
             />
           </Receipt>
           <div className="grid grid-cols-2 gap-4 px-0.5 pt-3.5 lg:px-1 lg:pt-4">
@@ -150,28 +173,42 @@ export function BerandaView({ settings, weekly, balances, accounts, perf, withdr
               id="balance-judul"
               title="Balance toko"
               action={
-                <Link href="/balance" className="flex min-h-tap items-center text-sm font-semibold no-underline">
+                <Link
+                  href="/balance"
+                  className="flex min-h-tap items-center text-sm font-semibold no-underline"
+                >
                   Buka balance
                 </Link>
               }
             />
             <div className="grid grid-cols-2 border-y border-divider *:py-3 *:pr-3 *:not-first:pl-4 lg:grid-cols-3 lg:*:py-4">
               {balances.map((b) => (
-                <div key={b.store_id} className="flex flex-col gap-0.5 border-r border-divider max-lg:nth-last-[2]:border-r-0">
+                <div
+                  key={b.store_id}
+                  className="flex flex-col gap-0.5 border-r border-divider max-lg:nth-last-[2]:border-r-0"
+                >
                   <span className="text-sm text-ink-muted">{b.nama}</span>
-                  <Amount currency="usd" value={b.saldo_usd} className="text-2xl font-bold lg:text-[26px] lg:leading-8 lg:font-extrabold" />
-                  <span className="hidden text-xs text-ink-muted lg:block">{b.akun_terjual} akun terjual</span>
+                  <Amount
+                    currency="usd"
+                    value={b.saldo_usd}
+                    className="text-2xl font-bold lg:text-[26px] lg:leading-8 lg:font-extrabold"
+                  />
+                  <span className="hidden text-xs text-ink-muted lg:block">
+                    {b.akun_terjual} akun terjual
+                  </span>
                 </div>
               ))}
               <div className="hidden flex-col gap-0.5 lg:flex">
                 <span className="text-sm text-ink-muted">Total</span>
                 <Amount currency="usd" value={totalSaldo} className="text-[26px] leading-8 font-extrabold" />
-                <span className="text-xs text-ink-muted">kira-kira {formatIdr(kiraRupiah)} kalau ditarik</span>
+                <span className="text-xs text-ink-muted">
+                  kira-kira {formatIdr(kiraRupiah)} kalau ditarik
+                </span>
               </div>
             </div>
             <p className="mt-1 text-xs text-ink-muted lg:hidden">
-              Total {formatUsd(totalSaldo)}, kira-kira {formatIdr(kiraRupiah)} kalau ditarik sekarang, sudah dipotong{" "}
-              {settings.potongan_tarik_pct}% + ${settings.potongan_tarik_usd} per toko
+              Total {formatUsd(totalSaldo)}, kira-kira {formatIdr(kiraRupiah)} kalau ditarik sekarang, sudah
+              dipotong {settings.potongan_tarik_pct}% + ${settings.potongan_tarik_usd} per toko
             </p>
           </section>
 
@@ -207,7 +244,10 @@ export function BerandaView({ settings, weekly, balances, accounts, perf, withdr
                   <Tr key={a.id}>
                     <Td className="text-ink-muted">{formatDateShort(a.tanggal_terjual!)}</Td>
                     <Td>
-                      <CellStack primary={<span className="block truncate">{a.isi_akun}</span>} secondary={`${a.kode} ${a.username ?? ""}`} />
+                      <CellStack
+                        primary={<span className="block truncate">{a.isi_akun || "Belum ada isi"}</span>}
+                        secondary={`${a.kode} ${a.username ?? ""}`}
+                      />
                     </Td>
                     <Td className="text-right">
                       <Amount currency="usd" value={a.harga_jual_usd} />
@@ -233,7 +273,11 @@ export function BerandaView({ settings, weekly, balances, accounts, perf, withdr
                     <Amount currency="usd" value={sum(soldThisWeek.map((a) => a.net_usd ?? 0))} />
                   </TfCell>
                   <TfCell className="pr-0 text-right font-extrabold">
-                    <Amount currency="idr" tone="profit" value={sum(soldThisWeek.map((a) => a.laba_idr ?? 0))} />
+                    <Amount
+                      currency="idr"
+                      tone="profit"
+                      value={sum(soldThisWeek.map((a) => a.laba_idr ?? 0))}
+                    />
                   </TfCell>
                 </Tr>
               </TFoot>
@@ -262,7 +306,10 @@ export function BerandaView({ settings, weekly, balances, accounts, perf, withdr
                   <Tr key={a.id}>
                     <Td className="text-ink-muted">{formatDateShort(a.tanggal_beli!)}</Td>
                     <Td>
-                      <CellStack primary={<span className="block truncate">{a.isi_akun}</span>} secondary={`${a.kode} ${a.username ?? ""}`} />
+                      <CellStack
+                        primary={<span className="block truncate">{a.isi_akun || "Belum ada isi"}</span>}
+                        secondary={`${a.kode} ${a.username ?? ""}`}
+                      />
                     </Td>
                     <Td>
                       <StatusChip status={a.status} />

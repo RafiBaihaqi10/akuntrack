@@ -64,6 +64,8 @@ export type AccountRow = {
   harga_listing_usd: number | null;
   status: AccountStatus;
   hold_sampai: string | null;
+  /** Held with no end date: hold_sampai stays empty. */
+  hold_tanpa_batas: boolean;
   tanggal_hb: string | null;
   catatan: string | null;
   is_legacy: boolean;
